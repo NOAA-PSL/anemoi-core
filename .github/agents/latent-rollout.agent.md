@@ -31,9 +31,18 @@ Before writing code, read neighbouring modules and mirror them. Specifically:
 - Use `LOGGER = logging.getLogger(__name__)`; no `print`, no `log.warn`, no blanket `# noqa`.
 - Follow existing naming (snake_case modules, `Anemoi*` model class prefixes, existing tensor-shape comments and dimension ordering `(batch, time, ensemble, grid, vars)`).
 
+**Verbosity (match anemoi-core exactly)**
+- Match the comment and docstring density of the surrounding anemoi-core code. When in doubt, write less.
+- No narrative comments: do not explain what the next line does, restate the code, describe your reasoning, or reference the plan, phases, "we", "now", "new", or "added for latent rollout".
+- Comments only where anemoi-core itself would use them: non-obvious math, tensor shape annotations (e.g. `# (batch, ensemble, grid, vars)`), sharding/distributed caveats, or a `TODO` with a concrete reason.
+- Docstrings: concise NumPy style as in existing modules — one-line summary, `Parameters`, `Returns`; no long prose, examples, or design essays.
+- Log messages: brief and factual, at the same levels existing code uses (`LOGGER.debug` for internals, `LOGGER.info` sparingly).
+- Keep design rationale in the PR description and `plan_latent_rollout.md`, not in code.
+
 **Tests & docs**
 - Add pytest unit tests for every new component, mirroring existing test layout and fixtures; existing tests must keep passing. Run the relevant package test suites.
-- Update Sphinx docs (`docs/`) for new user-facing classes/configs, following existing page structure (sphinx-lint must pass).
+- Tests follow the same verbosity rules: descriptive test names, no narrative comments.
+- Update Sphinx docs (`docs/`) for new user-facing classes/configs, following existing page structure and length (sphinx-lint must pass).
 
 **Commits & PRs**
 - Conventional Commits (`feat(models): ...`, `feat(training): ...`, `fix: ...`, `docs: ...`, `test: ...`) — required by release-please. Do not edit `CHANGELOG.md` or version files manually.
