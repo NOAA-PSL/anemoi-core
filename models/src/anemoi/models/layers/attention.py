@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 import math
 import os
@@ -58,6 +59,11 @@ class MultiHeadSelfAttention(nn.Module):
         the full requirements.
         You have to install flash attention yourself. If you are running on an x86 system, there are prebuilt
         wheels available on the GitHub repo. On an aarch64 system, you have to build flash attention from source.
+
+    "flex_attention"
+        Pytorch flex attention, compiled, with a block-sparse sliding-window mask: only the blocks within the
+        window are computed (SDPA with a window computes the full dense attention under a mask). For GPUs
+        without flash attention, e.g. AMD MI300X. No dropout, softcap or alibi slopes.
     """
 
     def __init__(
@@ -156,6 +162,7 @@ class MultiHeadSelfAttention(nn.Module):
         attn_funcs = {
             "flash_attention": FlashAttentionWrapper,
             "scaled_dot_product_attention": SDPAAttentionWrapper,
+            "flex_attention": FlexAttentionWrapper,
         }
 
         # Check if 'ANEMOI_INFERENCE_TRANSFORMER_ATTENTION_BACKEND' env var has been set
@@ -357,6 +364,68 @@ class SDPAAttentionWrapper(nn.Module):
         )
 
         return out
+
+
+class FlexAttentionWrapper(nn.Module):
+    """Wrapper for Pytorch flex attention with a block-sparse sliding-window mask (|q - kv| <= window_size, as
+    flash attention's window_size=(w, w)). The block mask is built once per sequence length and device.
+    To use this attention implementation: model.processor.attention_implementation='flex_attention'
+    """
+
+    def __init__(self):
+        super().__init__()
+        LOGGER.info("Using flex_attention.")
+        self.block_mask = None
+        self._mask_key = None
+
+    def __getstate__(self):
+        # the model is pickled into checkpoints: keep the block mask (rebuilt on first use) out of it
+        state = self.__dict__.copy()
+        state["block_mask"], state["_mask_key"] = None, None
+        return state
+
+    def forward(
+        self,
+        query,
+        key,
+        value,
+        batch_size: int,
+        causal=False,
+        window_size=None,
+        dropout_p=0.0,
+        softcap=None,
+        alibi_slopes=None,
+    ):
+        if dropout_p > 0 or (softcap is not None and softcap > 0) or alibi_slopes is not None:
+            raise NotImplementedError("flex_attention: dropout, softcap and alibi slopes are not supported.")
+        if causal:
+            raise NotImplementedError("flex_attention: causal attention is not supported.")
+
+        block_mask = None
+        if window_size is not None:
+            mask_key = (query.shape[-2], key.shape[-2], window_size, query.device)
+            if mask_key != self._mask_key:
+
+                def sliding_window(b, h, q_idx, kv_idx):
+                    return (q_idx - kv_idx).abs() <= window_size
+
+                from torch.nn.attention.flex_attention import create_block_mask
+
+                self.block_mask = create_block_mask(
+                    sliding_window, None, None, query.shape[-2], key.shape[-2], device=query.device
+                )
+                self._mask_key = mask_key
+            block_mask = self.block_mask
+
+        return _compiled_flex_attention()(query, key, value, block_mask=block_mask)
+
+
+@functools.cache
+def _compiled_flex_attention():
+    # module level, so the compiled function is not an attribute of the (pickled) model
+    from torch.nn.attention.flex_attention import flex_attention
+
+    return torch.compile(flex_attention, dynamic=False)
 
 
 class FlashAttentionWrapper(nn.Module):
