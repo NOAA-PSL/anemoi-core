@@ -8,6 +8,7 @@
 # nor does it submit to any jurisdiction.
 
 
+import fnmatch
 import logging
 import warnings
 from typing import Optional
@@ -59,6 +60,17 @@ class InputNormalizer(BasePreprocessor):
         # Two-step to avoid overwriting the original statistics in the loop (this reduces dependence on order)
         for idx, new_stats in statistics_remap.items():
             minimum[idx], maximum[idx], mean[idx], stdev[idx] = new_stats
+
+        # Optional floor on stdev, e.g. stdev_min: {"q_*": 1.0e-5}: stratospheric humidity varies by ~1e-7 kg/kg,
+        # and dividing by that amplifies its errors. Keys are fnmatch patterns; the largest matching floor wins.
+        stdev_min = (config or {}).get("stdev_min", {}) or {}
+        if stdev_min:
+            stdev = np.array(stdev, copy=True)
+            for name, i in name_to_index_training_input.items():
+                floors = [float(v) for pattern, v in stdev_min.items() if fnmatch.fnmatchcase(name, pattern)]
+                if floors and stdev[i] < max(floors):
+                    LOGGER.info(f"Normalizing: {name} stdev {stdev[i]:.3g} floored at {max(floors):.3g}.")
+                    stdev[i] = max(floors)
 
         self._validate_normalization_inputs(name_to_index_training_input, minimum, maximum, mean, stdev)
 

@@ -149,7 +149,7 @@ class AnemoiEnsModelEncProcDec(AnemoiModelEncProcDec):
 
         for bounding in self.boundings[dataset_name]:
             # bounding performed in the order specified in the config file
-            x_out = bounding(x_out)
+            x_out = bounding(x_out, x_ref=x_skip) if getattr(bounding, "needs_input", False) else bounding(x_out)
         return x_out
 
     def forward(

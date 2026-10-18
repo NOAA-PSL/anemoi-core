@@ -140,3 +140,68 @@ class NoVariableLevelScaler(BaseVariableLevelScaler):
         del variable_level  # unused
         # no scaling, always return 1.0
         return 1.0
+
+
+class ThicknessVariableLevelScaler(BaseVariableLevelScaler):
+    """Weights each level by the pressure thickness of its layer, so the loss is mass weighted.
+
+    Per variable (e.g. t, all its levels): layer edges halfway between levels, top edge 0, bottom edge at
+    the lowest level; each weight floored at ``floor`` times the mean weight (the thin layers above 10 hPa
+    still get trained); then scaled so the variable's weights sum to ``total``. With a fixed total the
+    balance against single-level variables does not depend on the number of levels (14 vs 37), and
+    ``total`` = 6.5 matches the default ReluVariableLevelScaler on the 14 AIFS levels.
+    """
+
+    def __init__(
+        self,
+        data_indices: IndexCollection,
+        group: str,
+        metadata_extractor: ExtractVariableGroupAndLevel,
+        floor: float = 0.1,
+        total: float = 6.5,
+        norm: str | None = None,
+        **kwargs,
+    ) -> None:
+        del kwargs
+        super().__init__(
+            data_indices,
+            group,
+            y_intercept=floor,
+            slope=0.0,
+            metadata_extractor=metadata_extractor,
+            norm=norm,
+        )
+        self.floor = floor
+        self.total = total
+
+    def get_level_scaling(self, variable_level: float) -> float:
+        raise NotImplementedError("ThicknessVariableLevelScaler weights depend on all levels of a variable.")
+
+    def get_scaling_values(self, **_kwargs) -> torch.Tensor:
+        variable_level_scaling = torch.ones((len(self.data_indices.model.output.full),), dtype=torch.float32)
+        levels: dict[str, dict[int, float]] = {}
+        for variable_name, idx in self.data_indices.model.output.name_to_index.items():
+            variable_group, variable_ref, variable_level = self.variable_metadata_extractor.get_group_and_level(
+                variable_name,
+            )
+            if variable_group != self.scaling_group:
+                continue
+            assert variable_level is not None, f"Variable {variable_name} has no level to scale."
+            levels.setdefault(variable_ref, {})[idx] = float(variable_level)
+
+        for variable_ref, idx_level in levels.items():
+            idx = torch.tensor(list(idx_level.keys()))
+            p = torch.tensor(list(idx_level.values()), dtype=torch.float64)
+            p_sorted, order = torch.sort(p)
+            edges = torch.cat([p_sorted.new_zeros(1), (p_sorted[1:] + p_sorted[:-1]) / 2, p_sorted[-1:]])
+            dp = edges.diff()
+            weights = torch.maximum(dp, self.floor * dp.mean())
+            weights = weights * self.total / weights.sum()
+            variable_level_scaling[idx[order]] = weights.to(torch.float32)
+            LOGGER.info(
+                "Thickness level scaling for %s: %s",
+                variable_ref,
+                ", ".join(f"{lev:g}:{w:.3f}" for lev, w in zip(p_sorted.tolist(), weights.tolist())),
+            )
+
+        return variable_level_scaling

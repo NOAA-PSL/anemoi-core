@@ -104,6 +104,11 @@ class BaseGraphModel(nn.Module):
             data_indices=self.data_indices,
             statistics=self.statistics,
         )
+        # boundings that also need the input state (e.g. GlobalDryMassFixer) get the data-node graph attributes
+        for dataset_name, dataset_boundings in self.boundings.items():
+            for bounding in dataset_boundings:
+                if getattr(bounding, "needs_input", False):
+                    bounding.bind(self._graph_data[dataset_name], self.data_indices[dataset_name].model.input.name_to_index)
 
     def _build_encoder_routing(self, encoders_config: DotDict) -> None:
         """Builds the dataset routing for encoders."""

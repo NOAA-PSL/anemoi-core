@@ -314,6 +314,84 @@ class LeakyFractionBounding(FractionBounding):
         return x
 
 
+class GlobalDryMassFixer(BaseBounding):
+    """Conserves global dry air mass (as in ACE): keeps the area-weighted global mean of the dry surface
+    pressure, sp - g * tcw, equal to its value in the latest input state by adding a spatially uniform
+    correction to sp.
+
+    Works on the normalized tensors. sp and the water column must be normalized with a scale of stdev
+    ("mean-std" or "std"); the offsets cancel in the difference. Needs the latest input state (``x_ref``,
+    the residual skip) and the data-node area weights (``bind``); the grid must not be sharded.
+
+    Parameters
+    ----------
+    variables : list[str]
+        The surface pressure variable, e.g. ``[sp]``. It receives the correction.
+    name_to_index : dict
+        Model output name to index.
+    water_var : str
+        Total column water (kg m-2), e.g. ``tcw``.
+    gravity : float
+        m s-2; converts the water column to Pa.
+    statistics, name_to_index_stats : dict
+        Dataset statistics (stdev) and their name to index mapping.
+    area_attr : str
+        Data-node attribute in the graph with the area weights.
+    """
+
+    needs_input = True
+
+    def __init__(
+        self,
+        *,
+        variables: list[str],
+        name_to_index: dict,
+        water_var: str = "tcw",
+        gravity: float = 9.80665,
+        statistics: dict,
+        name_to_index_stats: dict,
+        area_attr: str = "area_weight",
+    ) -> None:
+        super().__init__(
+            variables=variables,
+            name_to_index=name_to_index,
+            statistics=statistics,
+            name_to_index_stats=name_to_index_stats,
+        )
+        if len(variables) != 1 or water_var not in name_to_index:
+            raise ValueError(f"GlobalDryMassFixer: needs one pressure variable and {water_var} in the model output.")
+        self.pressure_var, self.water_var, self.area_attr = variables[0], water_var, area_attr
+        self.sp_out, self.w_out = name_to_index[self.pressure_var], name_to_index[water_var]
+        stdev = statistics["stdev"]
+        # dry-pressure change per unit of normalized water, in units of normalized sp
+        self.ratio = float(
+            gravity * stdev[name_to_index_stats[water_var]] / stdev[name_to_index_stats[self.pressure_var]]
+        )
+        self.sp_in = self.w_in = None
+        self.register_buffer("area", torch.empty(0), persistent=False)
+
+    def bind(self, node_store, input_name_to_index: dict) -> None:
+        """Set the area weights (normalized to sum 1) and the input indices of sp and the water column."""
+        area = torch.as_tensor(node_store[self.area_attr]).reshape(-1).to(torch.float64)
+        self.area = (area / area.sum()).to(device=self.area.device, dtype=torch.float32)
+        self.sp_in, self.w_in = input_name_to_index[self.pressure_var], input_name_to_index[self.water_var]
+
+    def forward(self, x: torch.Tensor, x_ref: Optional[torch.Tensor] = None) -> torch.Tensor:
+        # x: (batch, time, ensemble, grid, vars); x_ref: the latest input state, same layout, input variables
+        if x_ref is None or self.sp_in is None:
+            raise RuntimeError("GlobalDryMassFixer needs the latest input state, and bind() to have been called.")
+        if x.shape[-2] != self.area.numel():
+            raise RuntimeError(
+                f"GlobalDryMassFixer: {x.shape[-2]} grid points vs {self.area.numel()} area weights (sharded grid?)."
+            )
+        area = self.area.to(x.dtype)
+        d_sp = (x_ref[..., self.sp_in] - x[..., self.sp_out]) @ area
+        d_w = (x_ref[..., self.w_in] - x[..., self.w_out]) @ area
+        x = x.clone()  # the global means above depend on x
+        x[..., self.sp_out] += (d_sp - self.ratio * d_w).unsqueeze(-1)
+        return x
+
+
 def _build_dataset_boundings(
     bounding_cfgs: Any,
     data_indices: IndexCollection,

@@ -69,6 +69,7 @@ class BasePreprocessor(nn.Module):
             "remap",
             "normalizer",
             "method_kwargs",
+            "stdev_min",
         ]  # Keys that do not contain a list of variables in a preprocessing method.
         default = config.get("default", "none")
         remap = config.get("remap", {})
