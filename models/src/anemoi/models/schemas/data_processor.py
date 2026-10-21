@@ -37,6 +37,8 @@ class NormalizerSchema(BaseModel):
     """Variables to normalize with max."""
     none: Union[list[str], None] = Field(default_factory=list)
     """Variables not to be normalized."""
+    stdev_min: Union[dict[str, float], None] = Field(default_factory=dict)
+    """Floor on the normalizing stdev per variable name pattern (fnmatch), e.g. {"q_*": 1.0e-5}."""
 
 
 class ImputerSchema(BaseModel):

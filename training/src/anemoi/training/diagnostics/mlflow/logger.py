@@ -708,7 +708,12 @@ class BaseAnemoiMLflowLogger(MLFlowLogger, ABC):
             raise ValueError(msg)
 
         # Truncate parameter values.
-        params_list = [Param(key=k, value=str(v)[:truncation_length]) for k, v in expanded_params.items()]
+        # MLflow allows only alphanumerics and _-. :/ in names; config keys can be patterns such as
+        # normalizer.stdev_min.q_*
+        params_list = [
+            Param(key=re.sub(r"[^\w\-. :/]", "_", k), value=str(v)[:truncation_length])
+            for k, v in expanded_params.items()
+        ]
         for idx in range(0, len(params_list), 100):
             client.log_batch(run_id=run_id, params=params_list[idx : idx + 100])
 

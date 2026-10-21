@@ -181,6 +181,22 @@ class VariableLevelScalerSchema(BaseModel):
     "Y-axis shift of scaling function."
 
 
+class ThicknessVariableLevelScalerSchema(BaseModel):
+    target_: Literal["anemoi.training.losses.scalers.ThicknessVariableLevelScaler"] = Field(..., alias="_target_")
+    group: str = Field(example="pl")
+    "Group of variables to scale."
+    floor: float = Field(default=0.1, example=0.1)
+    "Minimum weight of a level."
+    total: float = Field(default=6.5, example=6.5)
+    "Sum of the weights over the levels of a variable."
+    norm: str | None = Field(default=None)
+    "Normalisation method applied to the weights."
+    slope: float | None = Field(default=None)
+    "Ignored; allowed so the entry can override a ReluVariableLevelScaler one in a composed config."
+    y_intercept: float | None = Field(default=None)
+    "Ignored, as slope (the floor sets the minimum weight)."
+
+
 class GraphNodeAttributeScalerSchema(BaseModel):
     target_: Literal["anemoi.training.losses.scalers.GraphNodeAttributeScaler"] = Field(..., alias="_target_")
     nodes_attribute_name: str = Field(example="area_weight")
@@ -247,6 +263,7 @@ class SpectralDimensionScalerSchema(BaseModel):
 ScalerSchema = (
     GeneralVariableLossScalerSchema
     | VariableLevelScalerSchema
+    | ThicknessVariableLevelScalerSchema
     | VariableMaskingScalerSchema
     | TendencyScalerSchema
     | NaNMaskScalerSchema

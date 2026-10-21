@@ -90,6 +90,19 @@ class NormalizedLeakyReluBoundingSchema(NormalizedReluBoundingSchema):
     "Leaky normalized Relu bounding object defined in anemoi.models.layers.bounding."
 
 
+class GlobalDryMassFixerSchema(BaseModel):
+    target_: Literal["anemoi.models.layers.bounding.GlobalDryMassFixer"] = Field(..., alias="_target_")
+    "Global dry-mass fixer defined in anemoi.models.layers.bounding; put it last in the bounding list."
+    variables: list[str]
+    "Surface pressure variable to correct, e.g. [sp]."
+    water_var: str = "tcw"
+    "Total column water, whose weight is excluded from the conserved dry mass."
+    gravity: float = 9.80665
+    "Gravitational acceleration (m s-2) converting column water (kg m-2) to pressure."
+    area_attr: str = "area_weight"
+    "Graph node attribute with the cell areas used for the global mean."
+
+
 BoundingSchema = Annotated[
     Union[
         ReluBoundingSchema,
@@ -100,6 +113,7 @@ BoundingSchema = Annotated[
         LeakyHardtanhBoundingSchema,
         NormalizedReluBoundingSchema,
         NormalizedLeakyReluBoundingSchema,
+        GlobalDryMassFixerSchema,
     ],
     Field(discriminator="target_"),
 ]
